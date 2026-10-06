@@ -33,4 +33,5 @@ const CommentSchema = new Schema(
 	{ timestamps: true, collection: 'comments' },
 );
 
+CommentSchema.index({ commentRefId: 1, commentStatus: 1, createdAt: -1 });
 export default CommentSchema;

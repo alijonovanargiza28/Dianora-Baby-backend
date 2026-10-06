@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class AppService {
-  getHello(): string {
-    return 'Welcone to Nestar Rest API Server';
-  }
+	getHello(): string {
+		return 'Welcome to DIANORA BABY API';
+	}
 }

@@ -1,274 +1,244 @@
+import { BadRequestException, Injectable, InternalServerErrorException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Follower, Following, Followers, Followings } from '../../libs/dto/follow/follow';
+import { MemberService } from '../member/member.service';
+import { InjectConnection } from '@nestjs/mongoose';
+import { Connection } from 'mongoose';
+import { atomic } from '../../libs/marketplace';
+import { Member } from '../../libs/dto/member/member';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationGroup, NotificationType } from '../../libs/enums/notification.enum';
+import { Model, Types } from 'mongoose';
+import { Direction, Message } from '../../libs/enums/common.enum';
+import { FollowInquiry } from '../../libs/dto/follow/follow.input';
 import {
-  BadRequestException,
-  Injectable,
-  InternalServerErrorException,
-} from "@nestjs/common";
-import { InjectModel } from "@nestjs/mongoose";
-import {
-  Follower,
-  Following,
-  Followers,
-  Followings,
-} from "../../libs/dto/follow/follow";
-import { MemberService } from "../member/member.service";
-import { Model, Types } from "mongoose";
-import { Direction, Message } from "../../libs/enums/common.enum";
-import { FollowInquiry } from "../../libs/dto/follow/follow.input";
-import {
-  lookupFollowingData,
-  lookupFollowerData,
-  lookupAuthMemberLiked,
-  lookupAuthMemberFollowed,
-} from "../../libs/config";
+	lookupFollowingData,
+	lookupFollowerData,
+	lookupAuthMemberLiked,
+	lookupAuthMemberFollowed,
+} from '../../libs/config';
 
 @Injectable()
 export class FollowService {
-  constructor(
-    @InjectModel("Follow")
-    private readonly followModel: Model<Follower | Following>,
-    private readonly memberService: MemberService,
-  ) {}
+	constructor(
+		@InjectConnection() private readonly connection: Connection,
+		@InjectModel('Member') private readonly members: Model<Member>,
+		private readonly notifications: NotificationService,
+		@InjectModel('Follow')
+		private readonly followModel: Model<Follower | Following>,
+		private readonly memberService: MemberService,
+	) {}
 
-  // =========================================================
-  // SUBSCRIBE
-  // =========================================================
+	// =========================================================
+	// SUBSCRIBE
+	// =========================================================
 
-  public async subscribe(
-    followerId: Types.ObjectId,
-    followingId: Types.ObjectId,
-  ): Promise<Follower> {
-    if (followerId.toString() === followingId.toString()) {
-      throw new InternalServerErrorException(Message.SELF_SUBSCRIPTION_DENIED);
-    }
+	public async subscribe(followerId: Types.ObjectId, followingId: Types.ObjectId): Promise<Follower> {
+		if (followerId.toString() === followingId.toString()) {
+			throw new InternalServerErrorException(Message.SELF_SUBSCRIPTION_DENIED);
+		}
 
-    const targetId = await this.memberService.getMember(null, followingId);
+		return atomic(this.connection, async (session) => {
+			const seller = await this.members
+				.findOne({ _id: followingId, memberType: 'SELLER', memberStatus: 'ACTIVE' })
+				.session(session);
+			if (!seller) throw new BadRequestException('SELLER_NOT_FOUND');
+			const [result] = await this.followModel.create([{ followerId, followingId }], { session });
+			await this.members.updateOne({ _id: followerId }, { $inc: { memberFollowings: 1 } }, { session });
+			await this.members.updateOne({ _id: followingId }, { $inc: { memberFollowers: 1 } }, { session });
+			await this.notifications.send(
+				followingId,
+				followerId,
+				NotificationType.FOLLOW,
+				NotificationGroup.MEMBER,
+				followerId,
+				'New follower',
+				session,
+			);
+			return result as Follower;
+		});
+	}
 
-    if (!targetId) {
-      throw new InternalServerErrorException(Message.NO_DATA_FOUND);
-    }
+	// =========================================================
+	// REGISTER SUBSCRIPTION
+	// =========================================================
 
-    const result = await this.registerSubscription(followerId, followingId);
+	private async registerSubscription(followerId: Types.ObjectId, followingId: Types.ObjectId): Promise<Follower> {
+		try {
+			return (await this.followModel.create({
+				followerId,
+				followingId,
+			})) as Follower;
+		} catch (err) {
+			console.log('Error ServiceModel', err);
 
-    await this.memberService.memberStatusEditor({
-      _id: followerId,
-      targetKey: "memberFollowings",
-      modifier: 1,
-    });
+			throw new BadRequestException(Message.CREATE_FAILED);
+		}
+	}
 
-    await this.memberService.memberStatusEditor({
-      _id: followingId,
-      targetKey: "memberFollowers",
-      modifier: 1,
-    });
+	// =========================================================
+	// UNSUBSCRIBE
+	// =========================================================
 
-    return result;
-  }
+	public async unsubscribe(followingId: Types.ObjectId, followerId: Types.ObjectId): Promise<Follower> {
+		return atomic(this.connection, async (session) => {
+			const result = await this.followModel.findOneAndDelete({ followingId, followerId }, { session });
+			if (!result) throw new BadRequestException('FOLLOW_NOT_FOUND');
+			await this.members.updateOne(
+				{ _id: followerId, memberFollowings: { $gt: 0 } },
+				{ $inc: { memberFollowings: -1 } },
+				{ session },
+			);
+			await this.members.updateOne(
+				{ _id: followingId, memberFollowers: { $gt: 0 } },
+				{ $inc: { memberFollowers: -1 } },
+				{ session },
+			);
+			return result as Follower;
+		});
+	}
 
-  // =========================================================
-  // REGISTER SUBSCRIPTION
-  // =========================================================
+	// =========================================================
+	// GET MEMBER FOLLOWINGS
+	// =========================================================
 
-  private async registerSubscription(
-    followerId: Types.ObjectId,
-    followingId: Types.ObjectId,
-  ): Promise<Follower> {
-    try {
-      return (await this.followModel.create({
-        followerId,
-        followingId,
-      })) as Follower;
-    } catch (err) {
-      console.log("Error ServiceModel", err);
+	public async getMemberFollowings(memberId: Types.ObjectId, input: FollowInquiry): Promise<Followings> {
+		const { page, limit, search } = input;
 
-      throw new BadRequestException(Message.CREATE_FAILED);
-    }
-  }
+		if (!search?.followerId) {
+			throw new InternalServerErrorException(Message.BAD_REQUEST);
+		}
 
-  // =========================================================
-  // UNSUBSCRIBE
-  // =========================================================
+		const match = {
+			followerId: search.followerId,
+		};
 
-  public async unsubscribe(
-    followingId: Types.ObjectId,
-    followerId: Types.ObjectId,
-  ): Promise<Follower> {
-    const targetMember = await this.memberService.getMember(null, followingId);
+		console.log('match:', match);
 
-    if (!targetMember) {
-      throw new InternalServerErrorException(Message.NO_DATA_FOUND);
-    }
+		const result = await this.followModel
+			.aggregate([
+				{
+					$match: match,
+				},
 
-    const result = await this.followModel.findOneAndDelete({
-      followingId,
-      followerId,
-    });
+				{
+					$sort: {
+						createdAt: Direction.DESC,
+					},
+				},
 
-    if (!result) {
-      throw new InternalServerErrorException(Message.NO_DATA_FOUND);
-    }
+				{
+					$facet: {
+						list: [
+							{
+								$skip: (page - 1) * limit,
+							},
 
-    await this.memberService.memberStatusEditor({
-      _id: followerId,
-      targetKey: "memberFollowings",
-      modifier: -1,
-    });
+							{
+								$limit: limit,
+							},
 
-    await this.memberService.memberStatusEditor({
-      _id: followingId,
-      targetKey: "memberFollowers",
-      modifier: -1,
-    });
+							lookupAuthMemberLiked(memberId, '$followingId'),
+							lookupAuthMemberFollowed({
+								followerId: memberId,
+								followingId: '$followingId',
+							})(memberId, '$followingId'),
 
-    return result as Follower;
-  }
+							lookupFollowingData,
 
-  // =========================================================
-  // GET MEMBER FOLLOWINGS
-  // =========================================================
+							{
+								$unwind: '$followingData',
+							},
+						],
 
-  public async getMemberFollowings(
-    memberId: Types.ObjectId,
-    input: FollowInquiry,
-  ): Promise<Followings> {
-    const { page, limit, search } = input;
+						metaCounter: [
+							{
+								$count: 'total',
+							},
+						],
+					},
+				},
+			])
+			.exec();
 
-    if (!search?.followerId) {
-      throw new InternalServerErrorException(Message.BAD_REQUEST);
-    }
+		if (!result?.length) {
+			throw new InternalServerErrorException(Message.NO_DATA_FOUND);
+		}
 
-    const match = {
-      followerId: search.followerId,
-    };
+		return result[0];
+	}
 
-    console.log("match:", match);
+	// =========================================================
+	// GET MEMBER FOLLOWERS
+	// =========================================================
 
-    const result = await this.followModel
-      .aggregate([
-        {
-          $match: match,
-        },
+	public async getMemberFollowers(memberId: Types.ObjectId, input: FollowInquiry): Promise<Followers> {
+		const { page, limit, search } = input;
 
-        {
-          $sort: {
-            createdAt: Direction.DESC,
-          },
-        },
+		if (!search?.followingId) {
+			throw new InternalServerErrorException(Message.BAD_REQUEST);
+		}
 
-        {
-          $facet: {
-            list: [
-              {
-                $skip: (page - 1) * limit,
-              },
+		const match = {
+			followingId: search.followingId,
+		};
 
-              {
-                $limit: limit,
-              },
+		console.log('match:', match);
 
-              lookupAuthMemberLiked(memberId, "$followingId"),
-              lookupAuthMemberFollowed({
-                followerId: memberId,
-                followingId: "$followingId",
-              })(memberId, "$followingId"),
+		const result = await this.followModel
+			.aggregate([
+				{
+					$match: match,
+				},
 
-              lookupFollowingData,
+				{
+					$sort: {
+						createdAt: Direction.DESC,
+					},
+				},
 
-              {
-                $unwind: "$followingData",
-              },
-            ],
+				{
+					$facet: {
+						list: [
+							{
+								$skip: (page - 1) * limit,
+							},
 
-            metaCounter: [
-              {
-                $count: "total",
-              },
-            ],
-          },
-        },
-      ])
-      .exec();
+							{
+								$limit: limit,
+							},
 
-    if (!result?.length) {
-      throw new InternalServerErrorException(Message.NO_DATA_FOUND);
-    }
+							// Member liked this follower member
+							lookupAuthMemberLiked(memberId, '$followerId'),
 
-    return result[0];
-  }
+							// Member followed this follower member
+							lookupAuthMemberFollowed({
+								followerId: memberId,
+								followingId: '$followerId',
+							})(memberId, '$followerId'),
 
-  // =========================================================
-  // GET MEMBER FOLLOWERS
-  // =========================================================
+							// Get follower member data
+							lookupFollowerData,
 
-  public async getMemberFollowers(
-    memberId: Types.ObjectId,
-    input: FollowInquiry,
-  ): Promise<Followers> {
-    const { page, limit, search } = input;
+							{
+								$unwind: '$followerData',
+							},
+						],
 
-    if (!search?.followingId) {
-      throw new InternalServerErrorException(Message.BAD_REQUEST);
-    }
+						metaCounter: [
+							{
+								$count: 'total',
+							},
+						],
+					},
+				},
+			])
+			.exec();
 
-    const match = {
-      followingId: search.followingId,
-    };
+		if (!result?.length) {
+			throw new InternalServerErrorException(Message.NO_DATA_FOUND);
+		}
 
-    console.log("match:", match);
-
-    const result = await this.followModel
-      .aggregate([
-        {
-          $match: match,
-        },
-
-        {
-          $sort: {
-            createdAt: Direction.DESC,
-          },
-        },
-
-        {
-          $facet: {
-            list: [
-              {
-                $skip: (page - 1) * limit,
-              },
-
-              {
-                $limit: limit,
-              },
-
-              // Member liked this follower member
-              lookupAuthMemberLiked(memberId, "$followerId"),
-
-              // Member followed this follower member
-              lookupAuthMemberFollowed({
-                followerId: memberId,
-                followingId: "$followerId",
-              })(memberId, "$followerId"),
-
-              // Get follower member data
-              lookupFollowerData,
-
-              {
-                $unwind: "$followerData",
-              },
-            ],
-
-            metaCounter: [
-              {
-                $count: "total",
-              },
-            ],
-          },
-        },
-      ])
-      .exec();
-
-    if (!result?.length) {
-      throw new InternalServerErrorException(Message.NO_DATA_FOUND);
-    }
-
-    return result[0];
-  }
+		return result[0];
+	}
 }

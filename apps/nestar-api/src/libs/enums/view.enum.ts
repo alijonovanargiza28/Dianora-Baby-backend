@@ -4,7 +4,8 @@ export enum ViewGroup {
 	MEMBER = 'MEMBER',
 	ARTICLE = 'ARTICLE',
 	PROPERTY = 'PROPERTY',
-  Member = "Member",
+	PRODUCT = 'PRODUCT',
+	Member = 'Member',
 }
 registerEnumType(ViewGroup, {
 	name: 'ViewGroup',

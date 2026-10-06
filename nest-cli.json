@@ -12,7 +12,7 @@
   "projects": {
     "nestar-api": {
       "type": "application",
-      "root": "apps/nestar",
+      "root": "apps/nestar-api",
       "entryFile": "main",
       "sourceRoot": "apps/nestar-api/src",
       "compilerOptions": {

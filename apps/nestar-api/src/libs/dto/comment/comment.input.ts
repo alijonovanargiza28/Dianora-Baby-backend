@@ -1,58 +1,65 @@
-import { Field, InputType, Int } from "@nestjs/graphql";
-import { IsIn, IsNotEmpty, IsOptional, Length, Min } from "class-validator";
-import mongoose from "mongoose";
+import { Max, IsInt, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+import { Field, InputType, Int } from '@nestjs/graphql';
+import { IsIn, IsNotEmpty, IsOptional, Length, Min } from 'class-validator';
+import mongoose from 'mongoose';
 
-import { CommentGroup } from "../../enums/comment.enum";
-import { Direction } from "../../enums/common.enum";
-import { availableCommentSorts } from "../../config";
+import { CommentGroup } from '../../enums/comment.enum';
+import { Direction } from '../../enums/common.enum';
+import { availableCommentSorts } from '../../config';
 
 @InputType()
 export class CommentInput {
-  @IsNotEmpty()
-  @Field(() => CommentGroup)
-  commentGroup!: CommentGroup;
+	@IsNotEmpty()
+	@Field(() => CommentGroup)
+	commentGroup!: CommentGroup;
 
-  @IsNotEmpty()
-  @Length(1, 100)
-  @Field(() => String)
-  commentContent!: string;
+	@IsNotEmpty()
+	@Length(1, 100)
+	@Field(() => String)
+	commentContent!: string;
 
-  @IsNotEmpty()
-  @Field(() => String)
-  commentRefId!: mongoose.Types.ObjectId;
+	@IsNotEmpty()
+	@Field(() => String)
+	commentRefId!: mongoose.Types.ObjectId;
 
-  memberId?: mongoose.Types.ObjectId;
+	memberId?: mongoose.Types.ObjectId;
 }
 
 @InputType()
 class CISearch {
-  @IsNotEmpty()
-  @Field(() => String)
-  commentRefId!: mongoose.Types.ObjectId;
+	@IsNotEmpty()
+	@Field(() => String)
+	commentRefId!: mongoose.Types.ObjectId;
 }
 
 @InputType()
 export class CommentsInquiry {
-  @IsNotEmpty()
-  @Min(1)
-  @Field(() => Int)
-  page!: number;
+	@IsNotEmpty()
+	@Min(1)
+	@IsInt()
+	@Field(() => Int)
+	page!: number;
 
-  @IsNotEmpty()
-  @Min(1)
-  @Field(() => Int)
-  limit!: number;
+	@IsNotEmpty()
+	@Min(1)
+	@IsInt()
+	@Max(100)
+	@Field(() => Int)
+	limit!: number;
 
-  @IsOptional()
-  @IsIn(availableCommentSorts)
-  @Field(() => String, { nullable: true })
-  sort?: string;
+	@IsOptional()
+	@IsIn(availableCommentSorts)
+	@Field(() => String, { nullable: true })
+	sort?: string;
 
-  @IsOptional()
-  @Field(() => Direction, { nullable: true })
-  direction?: Direction;
+	@IsOptional()
+	@Field(() => Direction, { nullable: true })
+	direction?: Direction;
 
-  @IsNotEmpty()
-  @Field(() => CISearch)
-  search!: CISearch;
+	@IsNotEmpty()
+	@ValidateNested()
+	@Type(() => CISearch)
+	@Field(() => CISearch)
+	search!: CISearch;
 }

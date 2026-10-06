@@ -1,78 +1,48 @@
-import { Injectable } from "@nestjs/common";
-import { InjectModel } from "@nestjs/mongoose";
-import { Member } from "apps/nestar-api/src/libs/dto/member/member";
-import { Property } from "apps/nestar-api/src/libs/dto/property/property";
-import {
-  MemberStatus,
-  MemberType,
-} from "apps/nestar-api/src/libs/enums/member.enum";
-import { PropertyStatus } from "apps/nestar-api/src/libs/enums/property.enum";
-import { Model } from "mongoose";
-
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { Member } from 'apps/nestar-api/src/libs/dto/member/member';
+import { Product } from 'apps/nestar-api/src/components/product/product';
 @Injectable()
 export class NestarBatchService {
-  constructor(
-    @InjectModel("Property") private readonly propertyModel: Model<Property>,
-    @InjectModel("Member") private readonly memberModel: Model<Member>,
-  ) {}
-
-  public async batchRollback(): Promise<void> {
-    await this.propertyModel
-      .updateMany(
-        {
-          propertyStatus: PropertyStatus.ACTIVE,
-        },
-        { propertyRank: 0 },
-      )
-      .exec();
-    await this.memberModel
-      .updateMany(
-        { memberStatus: MemberStatus.ACTIVE, memberType: MemberType.AGENT },
-        { memberRank: 0 },
-      )
-      .exec();
-    console.log("batchRollback");
-  }
-
-  public async batchTopProperties(): Promise<void> {
-    const properties: Property[] = await this.propertyModel
-      .find({ propertyStatus: PropertyStatus.ACTIVE, propertyRank: 0 })
-      .exec();
-    const promisedList = properties.map(async (ele: Property) => {
-      const { _id, propertyLikes, propertyViews } = ele;
-      const rank = propertyLikes * 2 + propertyViews * 1;
-      return await this.propertyModel.findByIdAndUpdate(_id, {
-        //5. Database'dagi rankni update qilish
-        propertyRank: rank,
-      });
-    });
-    await Promise.all(promisedList); //bo‘lmasa, method barcha update'lar tugashini kutmasligi mumkin.
-  }
-  public async batchTopAgents(): Promise<void> {
-    const agents: Member[] = await this.memberModel
-      .find({ memberType: MemberType.AGENT, memberRank: 0 })
-      .exec();
-    const promisedList = agents.map(async (ele: Member) => {
-      const {
-        _id,
-        memberProperties,
-        memberLikes,
-        memberArticles,
-        memberViews,
-      } = ele;
-      const rank =
-        memberProperties * 5 +
-        memberArticles * 3 +
-        memberLikes * 2 +
-        memberViews * 1;
-      return await this.memberModel.findByIdAndUpdate(_id, {
-        memberRank: rank,
-      });
-    });
-    await Promise.all(promisedList);
-  }
-
-  public getHello(): string {
-    return "Welcome to Nestar BATCH Server";
-  }
+	constructor(
+		@InjectModel('Product') private readonly products: Model<Product>,
+		@InjectModel('Member') private readonly members: Model<Member>,
+	) {}
+	async batchRollback(): Promise<void> {
+		await this.products.updateMany({ productStatus: { $in: ['ACTIVE', 'SOLD_OUT'] } }, { $set: { productRank: 0 } });
+		await this.members.updateMany({ memberType: 'SELLER', memberStatus: 'ACTIVE' }, { $set: { memberRank: 0 } });
+	}
+	async batchTopProducts(): Promise<void> {
+		await this.products.updateMany({ productStatus: { $in: ['ACTIVE', 'SOLD_OUT'] } }, [
+			{
+				$set: {
+					productRank: {
+						$add: ['$productViews', { $multiply: ['$productFavorites', 2] }, { $multiply: ['$productSales', 5] }],
+					},
+				},
+			},
+		]);
+	}
+	async batchTopSellers(): Promise<void> {
+		await this.members.updateMany({ memberType: 'SELLER', memberStatus: 'ACTIVE' }, [
+			{
+				$set: {
+					memberRank: {
+						$add: [
+							'$memberViews',
+							{ $multiply: ['$memberProducts', 5] },
+							{ $multiply: ['$memberArticles', 3] },
+							{ $multiply: ['$memberLikes', 2] },
+							{ $multiply: ['$memberFollowers', 2] },
+							{ $multiply: ['$memberSales', 5] },
+						],
+					},
+				},
+			},
+		]);
+	}
+	getHello(): string {
+		return 'Welcome to DIANORA BABY BATCH Server';
+	}
 }

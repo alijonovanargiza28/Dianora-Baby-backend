@@ -42,6 +42,7 @@ const NotificationSchema = new Schema(
 			ref: 'Member',
 		},
 
+		targetId: Schema.Types.ObjectId,
 		propertyId: {
 			type: Schema.Types.ObjectId,
 			ref: 'Property',
@@ -55,4 +56,5 @@ const NotificationSchema = new Schema(
 	{ timestamps: true, collection: 'notifications' },
 );
 
+NotificationSchema.index({ receiverId: 1, notificationStatus: 1, createdAt: -1 });
 export default NotificationSchema;

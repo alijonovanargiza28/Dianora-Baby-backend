@@ -1,98 +1,71 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# DIANORA BABY backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Multi-seller baby and kids marketplace built by extending the existing Nestar backend. NestJS, TypeScript, GraphQL/Apollo, MongoDB/Mongoose and JWT remain in place. Frontend code is outside this repository's scope.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Applications
 
-## Description
+- `apps/nestar-api`: GraphQL API, shared member/social modules, marketplace commerce and the existing WebSocket gateway.
+- `apps/nestar-batch`: scheduled product and seller ranking calculations.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Run
 
-## Project setup
+Use the existing npm lockfile and dependencies. Configure `.env` using `.env.example`; never commit real credentials. MongoDB must support transactions (a replica set or Atlas). Multi-document operations fail with `MONGODB_REPLICA_SET_REQUIRED` on a standalone server; no unsafe checkout fallback runs.
 
 ```bash
-$ npm install
+npm install
+npm run start:dev
+npm run start:dev:batch
 ```
 
-## Compile and run the project
+GraphQL is served at `/graphql`; uploaded images are served at `/uploads`. API defaults to port 3000; configure `PORT_BATCH=3001` when running both applications.
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm run build
+npx nest build nestar-batch
+npm run start:prod
+npm run start:prod:batch
 ```
 
-## Run tests
+`DELIVERY_FEE` defaults to 0 and uses the same currency as product prices. Prices are rounded to two decimal places. No currency conversion or real payment/courier provider is included. Set `BATCH_TIMEZONE` explicitly for deployment; its default is `Asia/Tashkent`.
+
+## Accounts
+
+Public `signup` uses `memberNick`, `memberPhone` and `memberPassword`. Login keeps the existing nickname identifier. Sending `memberType` never grants privileges. A valid one-use `sellerCode` creates SELLER; otherwise signup creates USER.
+
+ADMIN creates seller codes and may assign CS through `updateMemberByAdmin`. To bootstrap an initial administrator, set `ADMIN_NICK`, `ADMIN_PHONE`, `ADMIN_PASSWORD` in your shell environment and run the server-side script. It hashes the password, refuses duplicate accounts, and never prints credentials.
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npx ts-node scripts/bootstrap-admin.ts
+# After reviewing the dry-run:
+npx ts-node scripts/bootstrap-admin.ts --apply
 ```
 
-## Deployment
+JWT remains stateless with the existing 30-day lifetime. `logout` confirms client-side logout; the client must remove its token. Protected requests reload the current member's role and status from MongoDB, so blocking/demotion takes effect for previously issued tokens.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## Migration
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Existing Property source and documents are retained; Property resolvers are no longer registered in the live marketplace API. Products use a separate `products` collection. Real-estate properties are not silently converted into clothing products.
+
+The explicit, idempotent migration changes legacy AGENT accounts to SELLER, initializes new member statistics, and maps legacy article categories. It preserves passwords, documents and historical references. Back up/review the intended database before applying it.
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npx ts-node scripts/migrate-dianora.ts
+# After reviewing the dry-run and database backup:
+npx ts-node scripts/migrate-dianora.ts --apply
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+These scripts were not run against the existing remote database.
 
-## Resources
+## Verification
 
-Check out a few resources that may come in handy when working with NestJS:
+```bash
+npm test -- --runInBand
+npx tsc --noEmit --incremental false -p tsconfig.json
+npx ts-node scripts/verify-schema.ts
+npm run test:e2e
+npx jest --config apps/nestar-batch/test/jest-e2e.json --runInBand
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+Unit/security tests and the complete application/schema smoke test use disconnected models and explicit mocks. They do not contact the `.env` database. The schema script also exports GraphQL operations and declared indexes to `docs/`.
 
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+See [implementation report](docs/backend-implementation.md), [GraphQL schema](docs/graphql-schema.graphql), [operations](docs/graphql-operations.md), and [declared indexes](docs/database-indexes.json). Real MongoDB transaction/concurrency tests and HTTP/WebSocket network e2e still require an unrestricted local test environment.

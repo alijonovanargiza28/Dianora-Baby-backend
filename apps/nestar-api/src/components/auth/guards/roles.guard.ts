@@ -1,65 +1,19 @@
-import {
-  BadRequestException,
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  ForbiddenException,
-} from "@nestjs/common";
-import { Reflector } from "@nestjs/core";
-import { AuthService } from "../auth.service";
-import { Message } from "apps/nestar-api/src/libs/enums/common.enum";
-
+import { CanActivate, ExecutionContext, Injectable, ForbiddenException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { AuthService } from '../auth.service';
+import { AuthGuard } from './auth.guard';
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(
-    private reflector: Reflector, // Reflector @Roles() tomonidan saqlangan role'ni olish uchun
-    private authService: AuthService, //JWT tokenni tekshirish uchun
-  ) {}
-
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    const roles = this.reflector.get<string[]>("roles", context.getHandler());
-
-    if (!roles) return true;
-
-    console.info(`--- @guard() Authentication [RolesGuard]: ${roles} ---`);
-
-      if (context.getType<string>() === "graphql") {
-        const request = context.getArgByIndex(2).req;
-
-        const bearerToken = request.headers.authorization;
-
-        // Token umuman yuborilmagan
-        if (!bearerToken) {
-          throw new BadRequestException("Bearer token not provided");
-        }
-
-        const [bearer, token] = bearerToken.split(" ");
-
-        // Bearer yoki token noto'g'ri
-        if (bearer !== "Bearer" || !token) {
-          throw new BadRequestException("Bearer token not provided");
-        }
-
-        const authMember = await this.authService.verifyToken(token);
-
-        if (!authMember) {
-          throw new ForbiddenException(Message.ONLY_SPECIFIC_ROLES_ALLOWED);
-        }
-
-        const hasPermission = roles.indexOf(authMember.memberType) > -1;
-
-        if (!hasPermission) {
-          throw new ForbiddenException(Message.ONLY_SPECIFIC_ROLES_ALLOWED);
-        }
-
-        console.log("memberNick[roles] =>", authMember.memberNick);
-
-        request.body.authMember = authMember;
-
-        return true;
-      }
-
-    // GraphQL bo'lmagan contextlar
-    return true;
-  }
+	constructor(
+		private readonly reflector: Reflector,
+		private readonly authService: AuthService,
+	) {}
+	async canActivate(context: ExecutionContext): Promise<boolean> {
+		await new AuthGuard(this.authService).canActivate(context);
+		const roles = this.reflector.getAllAndOverride<string[]>('roles', [context.getHandler(), context.getClass()]);
+		const request =
+			context.getType<string>() === 'graphql' ? context.getArgByIndex(2).req : context.switchToHttp().getRequest();
+		if (roles && !roles.includes(request.body.authMember.memberType)) throw new ForbiddenException('FORBIDDEN');
+		return true;
+	}
 }
